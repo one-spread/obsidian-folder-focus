@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 - 2026-11-07
+
+### Added
+- Session-only undo/redo for move, rename, delete, creation, grouping, and imports, including conflict checks and grouped actions.
+- Space Quick Preview for Markdown, images, PDFs, folders, and unsupported-file information.
+- Back/forward navigation, clickable breadcrumbs, responsive file details, and selection count.
+
+### Changed
+- Return now renames inline; Cmd+O or Cmd+Down opens the selection.
+- Cmd+Shift+N now creates a folder. Cmd+Delete moves the selection to trash.
+- File-operation shortcuts are scoped to the focused Folder Focus list.
+
+---
+
 ## 1.1.3 - 2026-06-19
 
 ### Added

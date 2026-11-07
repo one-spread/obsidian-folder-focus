@@ -771,3 +771,28 @@
   width: 100%;
   margin-bottom: 1em;
 }
+
+/* Finder-style navigation, details and Quick Preview */
+.folder-focus-container { container-type: inline-size; }
+.folder-focus-breadcrumbs { display:flex; gap:4px; overflow-x:auto; margin-top:8px; }
+.folder-focus-breadcrumbs button { flex-shrink:0; font-size:11px; padding:2px 5px; box-shadow:none; }
+.folder-focus-nav { padding:4px; box-shadow:none; }
+.folder-focus-nav svg { width:15px; height:15px; }
+.folder-focus-status { flex-shrink:0; padding:7px 12px; border-top:1px solid var(--background-modifier-border); color:var(--text-muted); font-size:11px; }
+.folder-focus-item-meta { display:flex; gap:12px; margin-left:auto; color:var(--text-muted); font-size:11px; flex-shrink:0; }
+.folder-focus-item-date { width:85px; }
+.folder-focus-item-kind { width:55px; }
+.folder-focus-item-size { width:65px; text-align:right; }
+.folder-focus-item-name input { width:100%; height:26px; }
+.folder-focus-preview { width:min(850px, 90vw); }
+.folder-focus-preview-path { color:var(--text-muted); overflow-wrap:anywhere; margin-bottom:12px; font-size:12px; }
+.folder-focus-preview-body { overflow:auto; max-height:70vh; min-height:120px; margin-bottom:12px; user-select:text; }
+.folder-focus-preview-body img { display:block; max-width:100%; max-height:65vh; margin:auto; object-fit:contain; }
+.folder-focus-preview-body iframe { width:100%; height:65vh; border:0; }
+@container (max-width: 560px) { .folder-focus-item-date { display:none; } }
+@container (max-width: 430px) { .folder-focus-item-size { display:none; } }
+@container (max-width: 330px) { .folder-focus-item-meta { display:none; } }
+
+.folder-focus-header-top { flex-wrap:wrap; }
+.folder-focus-header-top .folder-focus-name { min-width:80px; }
+@container (max-width: 430px) { .folder-focus-sort { width:100%; justify-content:flex-end; } }

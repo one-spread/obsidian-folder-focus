@@ -14,7 +14,9 @@ A Finder-like folder navigation view for [Obsidian](https://obsidian.md).
 
 ### Navigation
 - **Focused folder view** in the right sidebar
-- **Finder-compatible keyboard shortcuts**
+- **Finder-compatible keyboard shortcuts** — Return renames, Space previews, and Cmd+Shift+N creates a folder
+- **Back/forward navigation** with clickable folder breadcrumbs
+- **Responsive file details** and a selected-item count
 - **Selection history** - remembers your position when navigating back
 - **Favorite folders** - pin folders and jump back to them from the header
 - **Live refresh** - automatically updates when files change externally (e.g., in Finder)
@@ -28,6 +30,14 @@ A Finder-like folder navigation view for [Obsidian](https://obsidian.md).
 - **Move items between folders** - drag selected items onto a folder row
 - **Import from Finder** - drag external files or folders into the current folder or a folder row
 - **Clear drag feedback** - valid, invalid, and import drop targets are shown while dragging
+
+### Undo and Quick Preview
+- **Cmd+Z / Cmd+Shift+Z** — undo and redo Folder Focus operations: move, rename, delete, create, group, and import.
+- Multi-item operations are a single history entry. The last 50 entries are kept in memory until the plugin unloads or Obsidian quits.
+- Changed files and occupied restore paths stop undo instead of overwriting content. Deleted files are backed up in memory before the configured Obsidian trash action runs.
+- History only covers actions performed through Folder Focus. Text editing keeps the editor's normal undo behavior.
+- **Space** opens an in-app preview for Markdown, common images, and PDFs; Space or Escape closes it. Arrow keys browse nearby items, or just the selected items when several are selected.
+- Folders show their direct item count. Unsupported formats show file information and an Open button; native macOS Quick Look is not used.
 
 ### Search
 - **Search mode toggle** - switch between file-name search and file names plus Markdown note text
@@ -113,9 +123,15 @@ Folder Focus is listed in Obsidian Community Plugins. Obsidian currently marks i
 | `⌘+A` / `Ctrl+A` | Select all |
 | `⌘+↑` / `Ctrl+↑` | Navigate to parent folder |
 | `⌘+↓` / `Ctrl+↓` | Enter folder or open file |
-| `Enter` | Enter folder or open file |
+| `Enter` | Rename one selected item inline |
+| `⌘+O` / `Ctrl+O` | Enter folder or open file |
+| `Space` | Toggle Quick Preview |
+| `⌘+Z` / `Ctrl+Z` | Undo the last Folder Focus operation |
+| `⇧⌘+Z` / `Ctrl+Shift+Z` | Redo |
+| `⌘+[` / `⌘+]` | Back / forward |
+| `⌘+Delete` / `Ctrl+Delete` | Move selected items to trash |
 | `⌘+Enter` / `Ctrl+Enter` | Open file in new tab |
-| `⇧⌘+N` / `Ctrl+Shift+N` | Create new note |
+| `⇧⌘+N` / `Ctrl+Shift+N` | Create new folder |
 | `Escape` | Clear search / Collapse selection |
 
 ### Mouse Actions
@@ -132,6 +148,9 @@ Folder Focus is listed in Obsidian Community Plugins. Obsidian currently marks i
 | Drag Finder files/folders into the view | Import them into the vault folder |
 
 ### Context Menu Options
+
+- **Undo / Redo** — shows the available operation
+- **Quick preview** — inspect the selected item
 
 - **Rename folder** - rename the selected folder
 - **Delete folder** - move folder to trash
@@ -165,7 +184,7 @@ All commands are available via the command palette (`⌘+P` / `Ctrl+P`):
 
 ## Releases
 
-- Current version: `1.1.2`
+- Current version: `1.2.0`
 - Minimum Obsidian version: `1.13.0`
 - Release downloads: [GitHub Releases](https://github.com/1spread/obsidian-folder-focus/releases/latest)
 - Full history: [CHANGELOG.md](CHANGELOG.md)

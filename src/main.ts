@@ -1,3 +1,4 @@
+import { OperationHistory } from './operationHistory';
 import { Plugin, WorkspaceLeaf, TFolder, Menu, PluginSettingTab, App, type SettingDefinitionItem } from 'obsidian';
 import { FolderFocusView, VIEW_TYPE_FOLDER_FOCUS } from './FolderFocusView';
 import {
@@ -34,9 +35,14 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [string, string]> = [
   ['Shift+Up / Down', 'Extend selection'],
   ['Cmd+A', 'Select all'],
   ['Cmd+Up', 'Parent folder'],
-  ['Cmd+Down / Enter', 'Enter folder or open file'],
+  ['Cmd+Down / Cmd+O', 'Enter folder or open file'],
+  ['Enter', 'Rename selection'],
+  ['Space', 'Preview selection'],
+  ['Cmd+Z / Shift+Cmd+Z', 'Undo / redo file operation'],
+  ['Cmd+[ / Cmd+]', 'Back / forward'],
+  ['Cmd+Delete', 'Move selection to trash'],
   ['Cmd+Enter', 'Open in new tab'],
-  ['Shift+Cmd+N', 'Create new note'],
+  ['Shift+Cmd+N', 'Create new folder'],
   ['Escape', 'Clear search'],
 ];
 
@@ -51,8 +57,11 @@ const MOUSE_ACTIONS: ReadonlyArray<readonly [string, string]> = [
 
 export default class FolderFocusPlugin extends Plugin {
   settings!: FolderFocusSettings;
+  history!: OperationHistory;
 
   onload(): void {
+    this.history = new OperationHistory(this.app);
+    this.register(() => this.history.clear());
     this.settings = { ...DEFAULT_SETTINGS };
     void this.loadSettings().then(
       () => {

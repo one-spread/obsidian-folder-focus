@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, TFolder, TAbstractFile, Menu, Modal, App, setIcon, Notice, Platform, normalizePath } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, TFolder, TAbstractFile, Menu, Modal, Scope, App, setIcon, Notice, Platform, normalizePath } from 'obsidian';
 import { getRenameMenuTitle } from './contextMenuLabels';
 import { getFileTypeBadge as getBadgeForExtension } from './fileTypeBadge';
 import type { FileTypeBadge } from './fileTypeBadge';
@@ -13,6 +13,7 @@ import {
 } from './searchUtils';
 import { sortVaultItems, type SortDirection, type SortOrder } from './sortUtils';
 import type FolderFocusPlugin from './main';
+import { QuickPreviewModal } from './QuickPreviewModal';
 
 export const VIEW_TYPE_FOLDER_FOCUS = 'folder-focus-view';
 
@@ -63,6 +64,12 @@ export class FolderFocusView extends ItemView {
   // Folder history: remembers selected item path when navigating away
   folderHistory: Map<string, string> = new Map();
 
+  private backPaths: string[] = [];
+  private forwardPaths: string[] = [];
+  private historyNavigation = false;
+  private preview: QuickPreviewModal | null = null;
+  private statusEl!: HTMLElement;
+
   // DOM elements
   headerEl!: HTMLElement;
   searchEl!: HTMLInputElement;
@@ -75,6 +82,12 @@ export class FolderFocusView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.searchMode = plugin.settings.defaultSearchMode;
+    this.scope = new Scope(this.app.scope);
+    this.scope.register(null, null, event => {
+      if (!this.listEl?.contains(event.target as Node)) return;
+      this.handleKeyDown(event);
+      if (event.defaultPrevented) return false;
+    });
   }
 
   getViewType(): string {
@@ -99,6 +112,16 @@ export class FolderFocusView extends ItemView {
 
     // List section
     this.listEl = container.createDiv({ cls: 'folder-focus-list' });
+    this.listEl.setAttribute('role', 'listbox');
+    this.listEl.setAttribute('aria-multiselectable', 'true');
+    this.statusEl = container.createDiv({ cls: 'folder-focus-status' });
+
+    this.registerDomEvent(this.listEl, 'focusin', () => {
+      this.app.workspace.setActiveLeaf(this.leaf, { focus: false });
+      queueMicrotask(() => {
+        if (this.listEl.contains(this.listEl.ownerDocument.activeElement)) this.app.workspace.setActiveLeaf(this.leaf, { focus: false });
+      });
+    });
 
     // Register keyboard navigation within the view
     this.registerDomEvent(this.listEl, 'keydown', (event: KeyboardEvent) => {
@@ -152,6 +175,7 @@ export class FolderFocusView extends ItemView {
   onClose(): Promise<void> {
     // Cleanup
     this.folderHistory.clear();
+    this.preview?.close();
 
     return Promise.resolve();
   }
@@ -159,6 +183,10 @@ export class FolderFocusView extends ItemView {
   // --- State Management ---
 
   setFolder(folder: TFolder, selectPath?: string) {
+    if (this.currentFolder && this.currentFolder.path !== folder.path && !this.historyNavigation) {
+      this.backPaths.push(this.currentFolder.path);
+      this.forwardPaths = [];
+    }
     this.currentFolder = folder;
     this.items = this.getSortedChildren(folder);
     this.allFilesInFolder = this.getAllFilesRecursively(folder);
@@ -305,8 +333,22 @@ export class FolderFocusView extends ItemView {
     // Top row: name and sort selector
     const topRow = this.headerEl.createDiv({ cls: 'folder-focus-header-top' });
 
+    for (const [label, icon, direction] of [['Back', 'arrow-left', -1], ['Forward', 'arrow-right', 1]] as const) {
+      const button = topRow.createEl('button', { cls: 'folder-focus-nav', attr: { 'aria-label': label } });
+      setIcon(button, icon);
+      button.disabled = !(direction < 0 ? this.backPaths : this.forwardPaths).length;
+      button.onclick = () => this.navigateHistory(direction);
+    }
     const nameEl = topRow.createDiv({ cls: 'folder-focus-name' });
     nameEl.setText(this.currentFolder.name || 'Vault root');
+
+    const crumbs = this.headerEl.createDiv({ cls: 'folder-focus-breadcrumbs' });
+    const parts = this.currentFolder.path.split('/').filter(Boolean);
+    ['', ...parts].forEach((part, index) => {
+      const path = parts.slice(0, index).join('/');
+      const button = crumbs.createEl('button', { text: part || 'Vault', attr: { title: path || 'Vault root' } });
+      button.onclick = () => { const folder = this.app.vault.getAbstractFileByPath(path); if (folder instanceof TFolder) this.setFolder(folder); };
+    });
 
     // Sort dropdown
     const sortEl = topRow.createDiv({ cls: 'folder-focus-sort' });
@@ -623,6 +665,8 @@ export class FolderFocusView extends ItemView {
         cls: `folder-focus-item ${isFolder ? 'is-folder' : 'is-file'}`,
       });
       itemEl.dataset.index = String(index);
+      itemEl.setAttribute('role', 'option');
+      itemEl.setAttribute('aria-selected', String(this.selectedIndices.has(index)));
 
       if (this.selectedIndices.has(index)) {
         itemEl.addClass('is-selected');
@@ -652,6 +696,11 @@ export class FolderFocusView extends ItemView {
       // Name
       const nameEl = itemEl.createSpan({ cls: 'folder-focus-item-name' });
       this.renderItemName(nameEl, item.name);
+
+      const meta = itemEl.createSpan({ cls: 'folder-focus-item-meta' });
+      meta.createSpan({ cls: 'folder-focus-item-date', text: item instanceof TFile ? new Date(item.stat.mtime).toLocaleDateString() : '' });
+      meta.createSpan({ cls: 'folder-focus-item-kind', text: item instanceof TFile ? item.extension.toUpperCase() : 'Folder' });
+      meta.createSpan({ cls: 'folder-focus-item-size', text: item instanceof TFile ? formatFileSize(item.stat.size) : '—' });
 
       // Chevron for folders
       if (isFolder) {
@@ -724,6 +773,12 @@ export class FolderFocusView extends ItemView {
         // Show context menu
         const menu = new Menu();
 
+        for (const redo of [false, true]) {
+          const label = redo ? this.plugin.history.redoLabel : this.plugin.history.undoLabel;
+          menu.addItem(i => i.setTitle(`${redo ? 'Redo' : 'Undo'}${label ? ' ' + label : ''}`).setDisabled(!label || this.plugin.history.busy).onClick(() => this.replayHistory(redo)));
+        }
+        menu.addItem(i => i.setTitle('Quick preview').onClick(() => this.showPreview()));
+        menu.addSeparator();
         // Folder-specific options
         if (isFolder) {
           menu.addItem((menuItem) => {
@@ -975,15 +1030,18 @@ export class FolderFocusView extends ItemView {
       this.itemElements.push(itemEl);
     });
 
+    this.updateStatus();
     // Scroll focused item into view
     this.scrollToFocused();
   }
 
   updateSelection() {
+    this.updateStatus();
     // Update all item elements with current selection state
     this.itemElements.forEach((el, index) => {
       el.toggleClass('is-selected', this.selectedIndices.has(index));
       el.toggleClass('is-focused', index === this.focusIndex);
+      el.setAttribute('aria-selected', String(this.selectedIndices.has(index)));
     });
 
     this.scrollToFocused();
@@ -1005,8 +1063,15 @@ export class FolderFocusView extends ItemView {
   }
 
   handleKeyDown(event: KeyboardEvent) {
+    if (event.defaultPrevented) return;
+    if (event.isComposing || ((event.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]'))) return;
     const isMod = event.metaKey || event.ctrlKey;
     const isShift = event.shiftKey;
+    if (isMod && event.key.toLowerCase() === 'z') { event.preventDefault(); event.stopPropagation(); void this.replayHistory(isShift); return; }
+    if (isMod && (event.key === '[' || event.key === ']')) { event.preventDefault(); this.navigateHistory(event.key === '[' ? -1 : 1); return; }
+    if (isMod && event.key.toLowerCase() === 'o') { event.preventDefault(); this.enterOrOpen(); return; }
+    if (isMod && (event.key === 'Backspace' || event.key === 'Delete')) { event.preventDefault(); void this.deleteSelection(); return; }
+    if (event.key === ' ' && !isMod && !event.altKey) { event.preventDefault(); this.showPreview(); return; }
 
     switch (event.key) {
       case 'ArrowUp':
@@ -1035,15 +1100,16 @@ export class FolderFocusView extends ItemView {
           // Cmd+Enter: Open in new tab
           this.enterOrOpenInNewTab();
         } else {
-          this.enterOrOpen();
+          const item = this.filteredItems[this.focusIndex];
+          if (item && this.selectedIndices.size === 1) void this.renameItem(item);
         }
         break;
       case 'n':
       case 'N':
         if (isMod && isShift) {
           event.preventDefault();
-          void this.createNewNote().catch((e) => {
-            console.error('Folder focus: failed to create note from shortcut', e);
+          void this.createNewFolder().catch((e) => {
+            console.error('Folder focus: failed to create folder from shortcut', e);
           });
         }
         break;
@@ -1177,6 +1243,10 @@ export class FolderFocusView extends ItemView {
   }
 
   async createNewFolder() {
+    await this.plugin.history.run('Create folder', () => this.createNewFolderImpl());
+  }
+
+  private async createNewFolderImpl() {
     if (!this.currentFolder) return;
 
     let folderName = 'New Folder';
@@ -1192,10 +1262,15 @@ export class FolderFocusView extends ItemView {
 
     const folderPath = parentPath ? `${parentPath}/${folderName}` : folderName;
     await this.app.vault.createFolder(folderPath);
+    await this.plugin.history.created(folderPath);
     // Vault event will trigger refresh automatically
   }
 
   async createNewNote() {
+    await this.plugin.history.run('Create note', () => this.createNewNoteImpl());
+  }
+
+  private async createNewNoteImpl() {
     if (!this.currentFolder) return;
 
     const baseName = 'Untitled';
@@ -1214,6 +1289,7 @@ export class FolderFocusView extends ItemView {
       : fileName;
 
     const newFile = await this.app.vault.create(filePath, '');
+    await this.plugin.history.created(filePath);
     const openInNewTab = this.plugin.settings.openInNewTab;
     const leaf = this.app.workspace.getLeaf(openInNewTab ? 'tab' : false);
     await leaf.openFile(newFile);
@@ -1223,6 +1299,10 @@ export class FolderFocusView extends ItemView {
   }
 
   async createFolderWithSelection() {
+    await this.plugin.history.run('Group selection', () => this.createFolderWithSelectionImpl());
+  }
+
+  private async createFolderWithSelectionImpl() {
     const selectedItems = Array.from(this.selectedIndices)
       .map(i => this.filteredItems[i])
       .filter(Boolean);
@@ -1246,17 +1326,18 @@ export class FolderFocusView extends ItemView {
     try {
       // Create folder
       await this.app.vault.createFolder(folderPath);
+      await this.plugin.history.created(folderPath);
 
       // Move selected items into folder
       for (const item of selectedItems) {
         const newPath = `${folderPath}/${item.name}`;
-        await this.app.fileManager.renameFile(item, newPath);
+        await this.plugin.history.move(item, newPath);
       }
 
       // Refresh view
       this.setFolder(this.currentFolder);
     } catch (error) {
-      console.error('Failed to create folder with selection:', error);
+      throw error;
     }
   }
 
@@ -1292,6 +1373,10 @@ export class FolderFocusView extends ItemView {
   }
 
   async refreshCurrentFolder() {
+    if (this.currentFolder && !this.app.vault.getAbstractFileByPath(this.currentFolder.path)) {
+      this.setFolder(this.app.vault.getRoot());
+      return;
+    }
     if (this.currentFolder) {
       this.items = this.getSortedChildren(this.currentFolder);
       this.allFilesInFolder = this.getAllFilesRecursively(this.currentFolder);
@@ -1303,17 +1388,91 @@ export class FolderFocusView extends ItemView {
   // --- Rename and Delete ---
 
   async renameItem(item: TAbstractFile) {
-    const newName = await this.promptForName(item.name, 'Rename');
-    if (newName && newName !== item.name) {
-      const parentPath = item.parent?.path || '';
-      const newPath = parentPath ? `${parentPath}/${newName}` : newName;
-      await this.app.fileManager.renameFile(item, newPath);
-    }
+    if (this.plugin.history.busy) return;
+    const row = this.itemElements[this.filteredItems.indexOf(item)];
+    const name = row?.querySelector<HTMLElement>('.folder-focus-item-name');
+    if (!name || name.querySelector('input')) return;
+    const input = name.ownerDocument.createElement('input');
+    input.value = item.name;
+    name.empty(); name.appendChild(input); input.focus();
+    input.setSelectionRange(0, item instanceof TFile && item.extension ? item.name.length - item.extension.length - 1 : item.name.length);
+    let done = false;
+    const finish = async (save: boolean) => {
+      if (done) return;
+      done = true;
+      const value = input.value.trim();
+      if (save && value && value !== item.name) {
+        if (/[\\/:]/.test(value) || value === '.' || value === '..') new Notice('Use a file name without path separators.');
+        else await this.plugin.history.run('Rename', () => this.plugin.history.move(item, item.parent?.path ? `${item.parent.path}/${value}` : value));
+      }
+      await this.refreshCurrentFolder(); this.listEl.focus();
+    };
+    input.onkeydown = event => {
+      event.stopPropagation();
+      if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); void finish(true); }
+      if (event.key === 'Escape') { event.preventDefault(); void finish(false); }
+    };
+    input.onblur = () => { void finish(false); };
   }
 
   async deleteItem(item: TAbstractFile) {
-    await this.app.fileManager.trashFile(item);
-    await this.refreshCurrentFolder();
+    const selected = this.getSelectedItems();
+    await this.deleteSelection(selected.includes(item) ? selected : [item]);
+  }
+
+  private getSelectedItems() {
+    return [...this.selectedIndices].sort((a,b) => a-b).map(i => this.filteredItems[i]).filter((i): i is TAbstractFile => !!i);
+  }
+
+  private async deleteSelection(items = this.getSelectedItems()) {
+    const roots = items.filter(i => !items.some(parent => parent !== i && i.path.startsWith(parent.path + '/')));
+    await this.plugin.history.run('Delete', async () => { for (const item of roots) await this.plugin.history.trash(item); });
+    await this.refreshCurrentFolder(); this.listEl.focus();
+  }
+
+  private updateStatus() {
+    if (this.statusEl) this.statusEl.setText(`${this.filteredItems.length} items · ${this.getSelectedItems().length} selected`);
+  }
+
+  private async replayHistory(redo: boolean) {
+    await this.plugin.history.replay(redo);
+    if (this.currentFolder && !this.app.vault.getAbstractFileByPath(this.currentFolder.path)) this.setFolder(this.app.vault.getRoot());
+    else await this.refreshCurrentFolder();
+    this.listEl.focus();
+  }
+
+  private navigateHistory(direction: number) {
+    const source = direction < 0 ? this.backPaths : this.forwardPaths;
+    const destination = direction < 0 ? this.forwardPaths : this.backPaths;
+    while (source.length) {
+      const path = source.pop()!;
+      const folder = this.app.vault.getAbstractFileByPath(path);
+      if (!(folder instanceof TFolder)) continue;
+      if (this.currentFolder) {
+        const item = this.filteredItems[this.focusIndex];
+        if (item) this.folderHistory.set(this.currentFolder.path, item.path);
+        destination.push(this.currentFolder.path);
+      }
+      this.historyNavigation = true;
+      try { this.setFolder(folder); } finally { this.historyNavigation = false; }
+      this.listEl.focus(); return;
+    }
+    this.renderHeader();
+  }
+
+  private showPreview() {
+    if (this.preview) { this.preview.close(); return; }
+    const items = this.getSelectedItems();
+    if (!items.length) return;
+    const candidates = items.length > 1 ? items : [...this.filteredItems];
+    const focused = this.filteredItems[this.focusIndex];
+    this.preview = new QuickPreviewModal(this.app, candidates, Math.max(0, candidates.indexOf(focused)), () => {
+      this.preview = null; this.listEl.focus();
+    }, item => {
+      const index = this.filteredItems.indexOf(item);
+      if (index >= 0) { this.focusIndex = index; if (items.length === 1) { this.selectedIndices = new Set([index]); this.anchorIndex = index; } this.updateSelection(); }
+    });
+    this.preview.open();
   }
 
   async promptForName(currentName: string, title: string): Promise<string | null> {
@@ -1432,6 +1591,9 @@ export class FolderFocusView extends ItemView {
   }
 
   private async moveItemsToFolder(sourcePaths: string[], targetFolder: TFolder): Promise<void> {
+    await this.plugin.history.run('Move', () => this.moveItemsToFolderImpl(sourcePaths, targetFolder));
+  }
+  private async moveItemsToFolderImpl(sourcePaths: string[], targetFolder: TFolder): Promise<void> {
     for (const sourcePath of sourcePaths) {
       const sourceFile = this.app.vault.getAbstractFileByPath(sourcePath);
       if (!sourceFile) continue;
@@ -1441,9 +1603,10 @@ export class FolderFocusView extends ItemView {
         : sourceFile.name;
 
       try {
-        await this.app.fileManager.renameFile(sourceFile, newPath);
+        await this.plugin.history.move(sourceFile, newPath);
       } catch (error) {
         console.error(`Failed to move ${sourcePath}:`, error);
+        new Notice(`Could not move ${sourcePath}: ${String(error)}`);
       }
     }
 
@@ -1457,6 +1620,9 @@ export class FolderFocusView extends ItemView {
   }
 
   private async importExternalDrop(event: DragEvent, targetFolder: TFolder): Promise<void> {
+    await this.plugin.history.run('Import', () => this.importExternalDropImpl(event, targetFolder));
+  }
+  private async importExternalDropImpl(event: DragEvent, targetFolder: TFolder): Promise<void> {
     const sources = await this.getExternalDropSources(event);
     if (sources.length === 0) {
       new Notice('No files found in drop.');
@@ -1550,6 +1716,7 @@ export class FolderFocusView extends ItemView {
         await this.trashCreatedPath(destinationFolderPath);
         throw error;
       }
+      await this.plugin.history.created(destinationFolderPath);
       return 1;
     }
 
@@ -1558,6 +1725,7 @@ export class FolderFocusView extends ItemView {
       const destinationPath = this.getUniqueVaultPath(targetFolder.path, fileName, false);
       const data = await fs.readFile(sourcePath);
       await this.app.vault.createBinary(destinationPath, this.toArrayBuffer(data));
+      await this.plugin.history.created(destinationPath);
       return 1;
     }
 
@@ -1575,6 +1743,7 @@ export class FolderFocusView extends ItemView {
         await this.trashCreatedPath(destinationFolderPath);
         throw error;
       }
+      await this.plugin.history.created(destinationFolderPath);
       return 1;
     }
 
@@ -1611,6 +1780,7 @@ export class FolderFocusView extends ItemView {
   private async importExternalFile(file: File, targetFolder: TFolder, fileName: string): Promise<void> {
     const destinationPath = this.getUniqueVaultPath(targetFolder.path, fileName, false);
     await this.app.vault.createBinary(destinationPath, await file.arrayBuffer());
+    await this.plugin.history.created(destinationPath);
   }
 
   private async copyDirectoryEntryContents(directoryEntry: FileSystemDirectoryEntry, destinationFolderPath: string): Promise<void> {
@@ -1796,4 +1966,10 @@ class RenameModal extends Modal {
   onClose() {
     this.contentEl.empty();
   }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
