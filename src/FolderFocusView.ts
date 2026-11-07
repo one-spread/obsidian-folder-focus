@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf, TFile, TFolder, TAbstractFile, Menu, Modal, Scope, App, setIcon, Notice, Platform, normalizePath } from 'obsidian';
+import { assertSafeDirectoryImport } from './importSafety';
+import { ItemView, WorkspaceLeaf, TFile, TFolder, TAbstractFile, Menu, Modal, Scope, App, setIcon, Notice, Platform, FileSystemAdapter, normalizePath } from 'obsidian';
 import { getRenameMenuTitle } from './contextMenuLabels';
 import { getFileTypeBadge as getBadgeForExtension } from './fileTypeBadge';
 import type { FileTypeBadge } from './fileTypeBadge';
@@ -32,6 +33,8 @@ interface FolderFocusDragData {
 interface ExternalFile extends File {
   path?: string;
 }
+
+type ExternalEntrySnapshot = { name: string; file: File } | { name: string; children: ExternalEntrySnapshot[] };
 
 interface ExternalDropSource {
   name: string;
@@ -77,6 +80,7 @@ export class FolderFocusView extends ItemView {
   itemElements: HTMLElement[] = [];
   searchInputComposing: boolean = false;
   searchInputCompositionEndedAt: number = 0;
+  private filterGeneration = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: FolderFocusPlugin) {
     super(leaf);
@@ -174,6 +178,7 @@ export class FolderFocusView extends ItemView {
 
   onClose(): Promise<void> {
     // Cleanup
+    this.filterGeneration++;
     this.folderHistory.clear();
     this.preview?.close();
 
@@ -183,6 +188,7 @@ export class FolderFocusView extends ItemView {
   // --- State Management ---
 
   setFolder(folder: TFolder, selectPath?: string) {
+    this.filterGeneration++;
     if (this.currentFolder && this.currentFolder.path !== folder.path && !this.historyNavigation) {
       this.backPaths.push(this.currentFolder.path);
       this.forwardPaths = [];
@@ -287,7 +293,7 @@ export class FolderFocusView extends ItemView {
     await this.plugin.saveSettings();
     this.renderHeader();
     if (this.searchQuery.trim()) {
-      await this.applyFilter();
+      if (!await this.applyFilter()) return;
       this.renderList();
     }
   }
@@ -376,7 +382,7 @@ export class FolderFocusView extends ItemView {
         }
         if (!this.currentFolder) return;
         this.items = this.getSortedChildren(this.currentFolder);
-        await this.applyFilter();
+        if (!await this.applyFilter()) return;
         this.renderList();
       })().catch((e) => {
         console.error('Folder focus: failed to change sort order', e);
@@ -396,7 +402,7 @@ export class FolderFocusView extends ItemView {
         dirBtn.setAttribute('aria-label', this.sortDirection === 'asc' ? 'Ascending' : 'Descending');
         if (!this.currentFolder) return;
         this.items = this.getSortedChildren(this.currentFolder);
-        await this.applyFilter();
+        if (!await this.applyFilter()) return;
         this.renderList();
       })().catch((e) => {
         console.error('Folder focus: failed to toggle sort direction', e);
@@ -485,7 +491,7 @@ export class FolderFocusView extends ItemView {
         this.searchQuery = '';
         this.searchEl.value = '';
         clearBtn.addClass('is-hidden');
-        await this.applyFilter();
+        if (!await this.applyFilter()) return;
         this.renderList();
         this.searchEl.focus();
       })().catch((e) => {
@@ -520,7 +526,7 @@ export class FolderFocusView extends ItemView {
           if (this.openBestFolderPathMatch(this.searchQuery)) {
             return;
           }
-          await this.applyFilter();
+          if (!await this.applyFilter()) return;
           this.renderList();
           this.listEl.focus();
         } else if (event.key === 'Escape') {
@@ -530,7 +536,7 @@ export class FolderFocusView extends ItemView {
             this.searchQuery = '';
             this.searchEl.value = '';
             clearBtn.addClass('is-hidden');
-            await this.applyFilter();
+            if (!await this.applyFilter()) return;
             this.renderList();
           }
           this.listEl.focus();
@@ -551,7 +557,7 @@ export class FolderFocusView extends ItemView {
       void (async () => {
         this.searchFoldersOnly = toggleCheckbox.checked;
         if (this.searchQuery) {
-          await this.applyFilter();
+          if (!await this.applyFilter()) return;
           this.renderList();
         }
       })().catch((e) => {
@@ -579,25 +585,32 @@ export class FolderFocusView extends ItemView {
     });
   }
 
-  async applyFilter() {
-    if (!this.searchQuery.trim()) {
-      this.filteredItems = this.items;
+  async applyFilter(): Promise<boolean> {
+    const generation = ++this.filterGeneration;
+    const rawQuery = this.searchQuery;
+    const mode = this.searchMode;
+    const foldersOnly = this.searchFoldersOnly;
+    const candidates = [...this.allFilesInFolder];
+    let filtered: TAbstractFile[];
+    if (!rawQuery.trim()) {
+      filtered = this.items;
     } else {
-      const query = normalizeSearchQuery(this.searchQuery);
+      const query = normalizeSearchQuery(rawQuery);
       const matchedItems: TAbstractFile[] = [];
 
       // Search all files recursively (including subfolders)
-      for (const item of this.allFilesInFolder) {
+      for (const item of candidates) {
+        if (generation !== this.filterGeneration) return false;
         // If folders only, skip files
-        if (this.searchFoldersOnly && !(item instanceof TFolder)) {
+        if (foldersOnly && !(item instanceof TFolder)) {
           continue;
         }
 
         // Match folder path for path-like queries.
         if (
           item instanceof TFolder
-          && isFolderPathSearchQuery(this.searchQuery)
-          && folderPathMatches(item.path, this.searchQuery)
+          && isFolderPathSearchQuery(rawQuery)
+          && folderPathMatches(item.path, rawQuery)
         ) {
           matchedItems.push(item);
           continue;
@@ -611,13 +624,14 @@ export class FolderFocusView extends ItemView {
 
         // Match by file content (for markdown files only, skip if folders only)
         if (
-          shouldSearchContent(this.searchMode)
-          && !this.searchFoldersOnly
+          shouldSearchContent(mode)
+          && !foldersOnly
           && item instanceof TFile
           && item.extension === 'md'
         ) {
           try {
             const content = await this.app.vault.cachedRead(item);
+            if (generation !== this.filterGeneration) return false;
             if (content.toLowerCase().includes(query)) {
               matchedItems.push(item);
             }
@@ -627,8 +641,11 @@ export class FolderFocusView extends ItemView {
         }
       }
 
-      this.filteredItems = this.getSortedItems(matchedItems);
+      filtered = this.getSortedItems(matchedItems);
     }
+
+    if (generation !== this.filterGeneration) return false;
+    this.filteredItems = filtered;
 
     // Reset selection to first item
     this.selectedIndices.clear();
@@ -637,6 +654,7 @@ export class FolderFocusView extends ItemView {
     }
     this.anchorIndex = 0;
     this.focusIndex = 0;
+    return true;
   }
 
   private openBestFolderPathMatch(query: string): boolean {
@@ -1323,22 +1341,18 @@ export class FolderFocusView extends ItemView {
 
     const folderPath = parentPath ? `${parentPath}/${folderName}` : folderName;
 
-    try {
-      // Create folder
-      await this.app.vault.createFolder(folderPath);
-      await this.plugin.history.created(folderPath);
+    // Create folder
+    await this.app.vault.createFolder(folderPath);
+    await this.plugin.history.created(folderPath);
 
-      // Move selected items into folder
-      for (const item of selectedItems) {
-        const newPath = `${folderPath}/${item.name}`;
-        await this.plugin.history.move(item, newPath);
-      }
-
-      // Refresh view
-      this.setFolder(this.currentFolder);
-    } catch (error) {
-      throw error;
+    // Move selected items into folder
+    for (const item of selectedItems) {
+      const newPath = `${folderPath}/${item.name}`;
+      await this.plugin.history.move(item, newPath);
     }
+
+    // Refresh view
+    this.setFolder(this.currentFolder);
   }
 
   // --- Recursive file retrieval ---
@@ -1380,7 +1394,7 @@ export class FolderFocusView extends ItemView {
     if (this.currentFolder) {
       this.items = this.getSortedChildren(this.currentFolder);
       this.allFilesInFolder = this.getAllFilesRecursively(this.currentFolder);
-      await this.applyFilter();
+      if (!await this.applyFilter()) return;
       this.renderList();
     }
   }
@@ -1682,7 +1696,7 @@ export class FolderFocusView extends ItemView {
         ? item.webkitGetAsEntry()
         : null;
       if (entry?.isDirectory && Platform.isDesktopApp) {
-        const file = item.getAsFile() as ExternalFile | null;
+        const file: ExternalFile | null = item.getAsFile();
         if (file?.path) {
           if (seenPaths.has(file.path)) continue;
           seenPaths.add(file.path);
@@ -1707,6 +1721,10 @@ export class FolderFocusView extends ItemView {
     const { fs, nodePath } = this.getDesktopModules();
     const stat = await fs.stat(sourcePath);
     if (stat.isDirectory()) {
+      const adapter = this.app.vault.adapter;
+      if (!(adapter instanceof FileSystemAdapter)) throw new Error('Cannot verify the directory import destination.');
+      const targetPath = nodePath.join(adapter.getBasePath(), targetFolder.path === '/' ? '' : targetFolder.path);
+      await assertSafeDirectoryImport(sourcePath, targetPath, fs, nodePath);
       const folderName = nodePath.basename(sourcePath);
       const destinationFolderPath = this.getUniqueVaultPath(targetFolder.path, folderName, true);
       await this.ensureVaultFolder(destinationFolderPath);
@@ -1735,10 +1753,13 @@ export class FolderFocusView extends ItemView {
   private async importExternalEntry(entry: FileSystemEntry, targetFolder: TFolder): Promise<number> {
     if (entry.isDirectory) {
       const directoryEntry = entry as FileSystemDirectoryEntry;
+      // Freeze the source tree before creating output; pathless browser entries
+      // can otherwise discover a newly-created destination inside their source.
+      const snapshot = await this.snapshotDirectoryEntry(directoryEntry);
       const destinationFolderPath = this.getUniqueVaultPath(targetFolder.path, directoryEntry.name, true);
       await this.ensureVaultFolder(destinationFolderPath);
       try {
-        await this.copyDirectoryEntryContents(directoryEntry, destinationFolderPath);
+        await this.copyDirectoryEntryContents(snapshot, destinationFolderPath);
       } catch (error) {
         await this.trashCreatedPath(destinationFolderPath);
         throw error;
@@ -1783,21 +1804,24 @@ export class FolderFocusView extends ItemView {
     await this.plugin.history.created(destinationPath);
   }
 
-  private async copyDirectoryEntryContents(directoryEntry: FileSystemDirectoryEntry, destinationFolderPath: string): Promise<void> {
-    const entries = await this.readAllDirectoryEntries(directoryEntry);
-    for (const entry of entries) {
-      if (entry.isDirectory) {
-        const childDirectory = entry as FileSystemDirectoryEntry;
-        const childFolderPath = this.getUniqueVaultPath(destinationFolderPath, childDirectory.name, true);
-        await this.ensureVaultFolder(childFolderPath);
-        await this.copyDirectoryEntryContents(childDirectory, childFolderPath);
-        continue;
-      }
+  private async snapshotDirectoryEntry(directoryEntry: FileSystemDirectoryEntry): Promise<ExternalEntrySnapshot[]> {
+    const snapshot: ExternalEntrySnapshot[] = [];
+    for (const entry of await this.readAllDirectoryEntries(directoryEntry)) {
+      if (entry.isDirectory) snapshot.push({ name: entry.name, children: await this.snapshotDirectoryEntry(entry as FileSystemDirectoryEntry) });
+      else if (entry.isFile) snapshot.push({ name: entry.name, file: await this.getFileFromEntry(entry as FileSystemFileEntry) });
+    }
+    return snapshot;
+  }
 
-      if (entry.isFile) {
-        const file = await this.getFileFromEntry(entry as FileSystemFileEntry);
-        const destinationPath = this.getUniqueVaultPath(destinationFolderPath, file.name, false);
-        await this.app.vault.createBinary(destinationPath, await file.arrayBuffer());
+  private async copyDirectoryEntryContents(snapshot: ExternalEntrySnapshot[], destinationFolderPath: string): Promise<void> {
+    for (const entry of snapshot) {
+      if ('children' in entry) {
+        const childFolderPath = this.getUniqueVaultPath(destinationFolderPath, entry.name, true);
+        await this.ensureVaultFolder(childFolderPath);
+        await this.copyDirectoryEntryContents(entry.children, childFolderPath);
+      } else {
+        const destinationPath = this.getUniqueVaultPath(destinationFolderPath, entry.name, false);
+        await this.app.vault.createBinary(destinationPath, await entry.file.arrayBuffer());
       }
     }
   }

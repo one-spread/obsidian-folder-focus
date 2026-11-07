@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.1 - 2026-11-07
+
+### Fixed
+- Prevent external folder imports from recursively copying their own destination, including pathless directory drops.
+- Prevent older asynchronous search results from replacing a newer query or folder view.
+- Resolve official Obsidian lint findings and correct the manual install directory.
+
+### Development
+- Add official Obsidian lint checks, type checks, regression tests, and CI before release.
+
+---
+
 ## 1.2.0 - 2026-11-07
 
 ### Added

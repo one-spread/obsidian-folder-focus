@@ -1,12 +1,14 @@
 {
   "name": "obsidian-folder-focus",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Finder-like folder navigation for Obsidian",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "lint": "eslint . --max-warnings 0",
+    "check": "tsc --noEmit --skipLibCheck && npm run lint"
   },
   "keywords": [],
   "author": "das",
@@ -14,8 +16,11 @@
   "devDependencies": {
     "@types/node": "^16.11.6",
     "esbuild": "0.25.5",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.5.1",
     "obsidian": "1.13.0",
     "tslib": "2.4.0",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "typescript-eslint": "^8.72.1"
   }
 }

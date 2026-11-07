@@ -102,7 +102,7 @@ Folder Focus is listed in Obsidian Community Plugins. Obsidian currently marks i
 ### Manual Installation
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/one-spread/obsidian-folder-focus/releases/latest)
-2. Create a folder `obsidian-folder-focus` in your vault's `.obsidian/plugins/` directory
+2. Create a folder `folder-focus` in your vault's `.obsidian/plugins/` directory
 3. Copy the downloaded files into this folder
 4. Reload Obsidian and enable the plugin in Settings → Community plugins
 
@@ -184,7 +184,7 @@ All commands are available via the command palette (`⌘+P` / `Ctrl+P`):
 
 ## Releases
 
-- Current version: `1.2.0`
+- Current version: `1.2.1`
 - Minimum Obsidian version: `1.13.0`
 - Release downloads: [GitHub Releases](https://github.com/one-spread/obsidian-folder-focus/releases/latest)
 - Full history: [CHANGELOG.md](CHANGELOG.md)
