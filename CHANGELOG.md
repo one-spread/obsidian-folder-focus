@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.2 - 2026-11-15
+
+### Changed
+- README now has a Disclosures section covering access to files outside the vault (Finder/Explorer imports only), clipboard use, and no network use, as required by Obsidian's developer policies.
+
+### Development
+- Update `eslint-plugin-obsidianmd` to 0.6.0 to match the community directory's current review rules.
+
+---
+
 ## 1.2.1 - 2026-11-07
 
 ### Fixed
