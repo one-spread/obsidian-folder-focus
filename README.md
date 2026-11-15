@@ -182,9 +182,17 @@ All commands are available via the command palette (`⌘+P` / `Ctrl+P`):
 
 - **Open files in new tab** - When enabled, files open in a new tab instead of the current one
 
+## Disclosures
+
+- **Files outside the vault** — Only when you drag files or folders from Finder or Explorer into the view (desktop only), Folder Focus reads those dragged items with Node.js `fs` and copies them into the chosen vault folder. It never reads other files outside your vault, and never modifies or deletes the originals.
+- **Clipboard** — *Copy path(s)* and the copy-folder-path button write vault paths to the clipboard only when you use them.
+- **Network use** — None. The plugin makes no network requests.
+- **No accounts, payments, ads, or telemetry** — The plugin is free, needs no account, and collects no data. The *Support* link below is an optional donation.
+- **Source** — Fully open source under the MIT license.
+
 ## Releases
 
-- Current version: `1.2.1`
+- Current version: `1.2.2`
 - Minimum Obsidian version: `1.13.0`
 - Release downloads: [GitHub Releases](https://github.com/one-spread/obsidian-folder-focus/releases/latest)
 - Full history: [CHANGELOG.md](CHANGELOG.md)
